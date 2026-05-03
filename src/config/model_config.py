@@ -1,6 +1,6 @@
 from src.utils.exceptions.custom_app_exception import CustomAppException
 import os
-from langchain_core.embeddings import BedrockEmbeddings
+from langchain_community.embeddings import BedrockEmbeddings
 from langchain_aws.chat_models import ChatBedrockConverse
 from src.config.config import config
 

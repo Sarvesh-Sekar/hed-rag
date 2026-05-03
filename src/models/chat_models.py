@@ -15,3 +15,6 @@ class APIResponse(BaseModel):
     status: str
     message: str
     data: dict | None = None
+
+class QueryRequest(BaseModel):
+    query: str

@@ -1,4 +1,3 @@
-from sample import GRAPH_QUERY
 from src.utils.exceptions.custom_app_exception import CustomAppException
 from fastapi import UploadFile,Depends
 from src.utils.helpers.logger_helper import logger

@@ -1,9 +1,9 @@
 import os
 import json
 from dataclasses import dataclass
-from dotenv import load_dotenv,find_dotenv
+from dotenv import load_dotenv
 
-load_dotenv(find_dotenv())
+load_dotenv()
 
 @dataclass
 class Config:
@@ -15,6 +15,8 @@ class Config:
     provider: str
     llm_temperature: float
     graph_query: str
+    cypher_prompt:str
+    final_prompt:str
     base_keywords: list[str]
     relation_words: list[str]
     max_tokens: int
@@ -41,6 +43,8 @@ class Config:
             llm_model_id=os.getenv("LLM_MODEL_ID"),
             embedding_model_id=os.getenv("EMBEDDING_MODEL_ID"),
             provider=os.getenv("PROVIDER"),
+            cypher_prompt=os.getenv("CYPHER_PROMPT"),
+            final_prompt=os.getenv("FINAL_PROMPT"),
             llm_temperature=float(os.getenv("LLM_TEMPERATURE")),
             graph_query=os.getenv("GRAPH_QUERY", ""),
             base_keywords=parse_list("BASE_KEYWORDS"),
