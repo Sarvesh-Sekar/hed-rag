@@ -90,7 +90,7 @@ Supports ingestion from:
 ```text
                 ┌────────────────────┐
                 │   Data Sources     │
-                │ PDFs | CSV | Web   │
+                │ PDFs | TXT | DOCX  │
                 └────────┬───────────┘
                          ↓
                 ┌────────────────────┐
@@ -98,11 +98,29 @@ Supports ingestion from:
                 │ ETL Pipelines      │
                 └────────┬───────────┘
                          ↓
+            ┌────────────────────────────────┐
+            │ Document Processing Layer      │
+            │ - Text Extraction              │
+            │ - Chunking                     │
+            │ - Embedding Generation         │
+            │ - Chunk Scoring                │
+            └────────┬───────────────────────┘
+                     ↓
+         ┌────────────────────────────────┐
+         │ Knowledge Graph Construction   │
+         │ - Entity Extraction (LLM)      │
+         │ - Relationship Extraction      │
+         │ - Entity Resolution            │
+         │ - Ontology Mapping             │
+         │ - Graph Merging                │
+         └────────┬───────────────────────┘
+                  ↓
         ┌────────────────────────────────┐
         │ Storage Layer                  │
-        │ - Vector DB (Embeddings)       │
-        │ - Graph DB (Neo4j)             │
-        │ - SQL DB (PostgreSQL)          │
+        │ - Neo4j Graph DB               │
+        │ - Chunk Embeddings             │
+        │ - PostgreSQL                   │
+        │ - Redis Cache                  │
         └────────┬───────────────────────┘
                  ↓
         ┌────────────────────────────────┐
@@ -111,11 +129,11 @@ Supports ingestion from:
         └────────┬───────────────────────┘
                  ↓
         ┌────────────────────────────────┐
-        │ LLM (RAG Response Generation)  │
+        │ LLM Response Generation        │
         └────────┬───────────────────────┘
                  ↓
         ┌────────────────────────────────┐
-        │ User Interface / API           │
+        │ User Interface / APIs          │
         └────────────────────────────────┘
 ```
 
@@ -191,12 +209,8 @@ Query Router
 
 * **Backend:** FastAPI
 * **LLM Framework:** LangChain / LangGraph
-* **Vector DB:** FAISS / Pinecone
 * **Graph DB:** Neo4j
-* **Database:** PostgreSQL
-* **Cache / Memory:** Redis
-* **Workers:** Celery / Kafka
-* **Storage:** S3 / MinIO
+
 
 ---
 
