@@ -24,6 +24,8 @@ class Config:
     dimensions: int
     host: str
     port: int
+    allowed_nodes: list[str]
+    allowed_relationships: list[str]
 
     @classmethod
     def load(cls):
@@ -53,6 +55,8 @@ class Config:
             max_retries=int(os.getenv("MAX_RETRIES")),
             dimensions=int(os.getenv("DIMENSIONS")),
             host=os.getenv("HOST"),
+            allowed_nodes=parse_list("ALLOWED_NODES"),
+            allowed_relationships=parse_list("ALLOWED_RELATIONSHIPS"),
             port=int(os.getenv("PORT"))
         )
 

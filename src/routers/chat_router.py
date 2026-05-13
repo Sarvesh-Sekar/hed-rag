@@ -1,20 +1,21 @@
-from fastapi import APIRouter , UploadFile, HTTPException
+from fastapi import APIRouter , UploadFile,File
 from fastapi.responses import JSONResponse
 from src.utils.exceptions.custom_app_exception import CustomAppException
-from src.models.chat_models import UploadRequestModel,QueryRequest
+from src.models.chat_models import QueryRequest
 from fastapi import Depends
 from src.services.upload_service import UploadService, get_upload_service
 from src.services.retrieve_service import RetrieveService, get_retrieve_service
-
+from src.utils.helpers.logger_helper import logger
 
 
 router = APIRouter(prefix="/api/admin", tags=["Admin Upload"])
 
 
 @router.post("/upload")
-async def upload_file(request: UploadRequestModel, upload_service: UploadService = Depends(get_upload_service)):
+async def upload_file(file: UploadFile = File(...), upload_service: UploadService = Depends(get_upload_service)):
     try:
-        result = await upload_service.upload_file(request.file)
+        logger.info("Router triggered successfully")
+        result = await upload_service.upload_file(file)
         return JSONResponse(content={"status": "success", "message": "File uploaded and processed successfully", "data": result.model_dump()})
     except CustomAppException as e:
         raise CustomAppException(status_code=e.status_code, content=e.detail, err_code=e.err_code)

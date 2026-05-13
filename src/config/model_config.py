@@ -1,8 +1,9 @@
 from src.utils.exceptions.custom_app_exception import CustomAppException
 import os
-from langchain_community.embeddings import BedrockEmbeddings
+from langchain_aws.embeddings import BedrockEmbeddings
 from langchain_aws.chat_models import ChatBedrockConverse
 from src.config.config import config
+from src.utils.helpers.logger_helper import logger
 
 class ModelConfig:
 
@@ -21,6 +22,8 @@ class ModelConfig:
                 provider=config.provider
             )
             
+            logger.info('LLM Object was created')
+            
             self.embeddings = BedrockEmbeddings(
                 model_id=config.embedding_model_id,
                 model_kwargs={
@@ -29,6 +32,8 @@ class ModelConfig:
                     }
             )
             self._initialized = True
+
+            logger.info('Created Embeddings LLM Object')
 
         return self.llm, self.embeddings
 

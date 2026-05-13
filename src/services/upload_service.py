@@ -25,10 +25,12 @@ class UploadService:
                 username=config.neo4j_username,
                 password=config.neo4j_password
             )
-            embeddings, llm = await models.initialize_models()
-            transformer = LLMGraphTransformer(llm=llm)
+            llm, embeddings = await models.initialize_models()
+            transformer = LLMGraphTransformer(llm=llm,allowed_nodes=config.allowed_nodes, allowed_relationships=config.allowed_relationships)
             graph_query_embedding = embeddings.embed_query(config.graph_query)
-            result = await self.ingestion_pipeline.ingest_pdf(content=content, embeddings=embeddings, transformer=transformer,graph=graph,graph_query_embedding=graph_query_embedding)
+
+            logger.info('Calling ingest_pdf to ingest content')
+            result = await self.ingestion_pipeline.ingest_pdf(content=content, file_name=file.filename,embeddings=embeddings, transformer=transformer,graph=graph,graph_query_embedding=graph_query_embedding)
 
 
             return APIResponse(status="success", message="File uploaded and processed successfully", data=result)
