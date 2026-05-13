@@ -1,3 +1,4 @@
+from html import entities
 from src.utils.exceptions.custom_app_exception import CustomAppException
 from src.config.model_config import models
 from src.config.config import config
@@ -9,104 +10,174 @@ class RetrievalPipeline:
     def __init__(self):
         self.models = models
 
-    async def generate_cypher(self, llm, query: str) -> str:
-        try:
-            prompt = f"""
-                You are a Neo4j expert.
-
-                Generate ONLY a Cypher query for the question below.
-
-                Rules:
-                - Do NOT explain.
-                - Do NOT add markdown.
-                - Use ONLY the given schema.
-                - Do NOT invent labels or relationships.
-
-                Schema:
-                Nodes:
-                - Madras(name)
-                - QualityEducation(details)
-
-                Relationships:
-                - (QualityEducation)-[:SCHEME]->(Madras)
-
-                Question: {query}
-                """
-            response = await llm.ainvoke(prompt)
-            # Pick first generation text
-            response = response.content.strip() if hasattr(response, 'content') else str(response).strip()
-        
-            return (
-                response.replace("```cypher", "")
-                    .replace("```", "")
-                    .strip()
-            )
-        except Exception as e:
-            logger.info(f"generate_cypher failed: {e}", exc_info=True)
-            raise CustomAppException(status_code=500, content=str(e), err_code="CYTHER_GENERATION_FAILED")
-
-    async def run_cypher(self, graph: Neo4jGraph, cypher: str):
-        try:
-            print(cypher,'**#####')
-            return graph.query(cypher)
-        except Exception as e:
-            logger.info(f"run_cypher failed: {e}", exc_info=True)
-            raise CustomAppException(status_code=500, content=str(e), err_code="CYPHER_EXECUTION_FAILED")
 
     async def vector_search(self, embeddings, graph: Neo4jGraph, query: str, k: int = 5):
         try:
             query_embedding = embeddings.embed_query(query)
-            result = graph.query(
-                """
-CALL db.index.vector.queryNodes('node_vector_index', $k, $embedding)
-YIELD node, score
-RETURN node.content AS content, score
-""",
-                {"k": k, "embedding": query_embedding},
+
+            result = graph.query("""
+            CALL db.index.vector.queryNodes(
+                'chunk_embedding_index',
+                $k,
+                $embedding
             )
-            return [r["content"] for r in result]
+
+            YIELD node, score
+
+            RETURN
+                node.chunk_id AS chunk_id,
+                node.text AS text,
+                score
+            """, {
+                "k": k,
+                "embedding": query_embedding
+            })
+
+            print(result,'vector search results')
+            return result
+
         except Exception as e:
             logger.info(f"vector_search failed: {e}", exc_info=True)
             raise CustomAppException(status_code=500, content=str(e), err_code="VECTOR_SEARCH_FAILED")
 
-    async def graph_qa(self, llm, graph: Neo4jGraph, query: str):
-        try:
-            cypher = await self.generate_cypher(llm, query)
-            data = await self.run_cypher(graph, cypher)
 
-            # Debug print to inspect retrieved data
-            logger.info(f"graph_qa data: {data}")
+    async def extract_query_entities(self,llm,query):
 
-            final_prompt = f"""
-Answer the question using the data below.
+        prompt = f"""
+        Extract important entities from the query.
 
-Question: {query}
+        Allowed Entity Types:
+        - Scheme
+        - Benefit
+        - Eligibility
+        - Department
+        - Institution
+        - Course
+        - IncomeLimit
+        - StudentCategory
 
-Data:
-{data}
+        Return ONLY comma separated entity names.
 
-Rules:
-- Do NOT explain database queries
-- Do NOT mention Cypher
-- Give a clear, direct answer
-- If no data found, say "No relevant information found"
+        Query:
+        {query}
+        """
 
-Final Answer:
-"""
+        response = llm.invoke(prompt).content.strip()
 
-            # Try async generation, fall back to ainvoke
-            try:
-                response = await llm.agenerate([final_prompt])
-                answer = response.generations[0][0].text.strip()
-            except Exception:
-                answer = await llm.ainvoke(final_prompt)
+        entities = [
+            e.strip()
+            for e in response.split(",")
+            if e.strip()
+        ]
 
-            return answer
-        except CustomAppException:
-            raise
-        except Exception as e:
-            logger.info(f"graph_qa failed: {e}", exc_info=True)
-            raise CustomAppException(status_code=500, content=str(e), err_code="GRAPH_QA_FAILED")
+        return entities
+
+
+    async def find_related_entities(self, graph, entities):
+
+        collected = []
+
+        for entity in entities:
+
+            result = graph.query("""
+            MATCH (e:Entity)
+
+            WHERE toLower(e.name)
+            CONTAINS toLower($entity)
+
+            RETURN
+                e.entity_id AS entity_id,
+                e.name AS name,
+                labels(e) AS labels
+            LIMIT 10
+            """, {
+                "entity": entity
+            })
+
+            collected.extend(result)
+
+        return collected
+    
+    async def traverse_graph(self,graph,entity_ids, hops=2):
+
+        graph_results = []
+
+        for entity_id in entity_ids:
+            
+            # hops denotes entity can be from 1 to 2 hops
+            result = graph.query(f"""
+            MATCH (e:Entity {{entity_id:$entity_id}})
+            -[r*1..{hops}]-               
+            (related)
+
+            UNWIND r as rel
+
+            RETURN DISTINCT
+                startNode(rel).name AS source,
+                type(rel) AS relationship,
+                endNode(rel).name AS target
+            LIMIT 50
+            """, {
+                "entity_id": entity_id
+            })
+
+            graph_results.extend(result)
+
+            print(graph_results,'graph traversal results')
+
+
+        return graph_results
+
+    async def format_graph_context(self, graph_results):
+
+        lines = []
+
+        for row in graph_results:
+
+            source = row["source"]
+            relation = row["relationship"]
+            target = row["target"]
+
+            line = (
+                f"{source} "
+                f"-[{relation}]-> "
+                f"{target}"
+            )
+
+            lines.append(line)
+
+        lines = list(set(lines))
+
+        return "\n".join(lines)
+
+    async def entity_chunk_context(self, graph, entity_ids, limit=10):
+
+        all_chunks = []
+
+        for entity_id in entity_ids:
+
+            result = graph.query("""
+            MATCH (c:Chunk)-[:MENTIONS]->(e:Entity)
+
+            WHERE e.entity_id = $entity_id
+
+            RETURN DISTINCT
+                c.text AS text
+            LIMIT $limit
+            """, {
+                "entity_id": entity_id,
+                "limit": limit
+            })
+
+            all_chunks.extend(
+                [r["text"] for r in result]
+            )
+
+        # remove duplicates
+        all_chunks = list(set(all_chunks))
+        
+
+        return all_chunks
 
     async def hybrid_retrieval(self, query: str, k: int = 5):
         try:
@@ -120,38 +191,55 @@ Final Answer:
                 password=config.neo4j_password,
             )
 
-            # Try vector search but don't fail if it returns nothing
-            try:
-                contexts = await self.vector_search(embeddings, graph, query, k=k)
-                print(contexts,'contexts')
-            except CustomAppException:
-                contexts = []
 
-            # Run graph QA (uses generate_cypher + run_cypher)
-            graph_answer = await self.graph_qa(llm, graph, query)
+            vector_results = await self.vector_search(embeddings, graph, query, k=k)
 
-            # Build combined final prompt
-            final_prompt = f"""
-Question: {query}
+            vector_contexts = [r["text"] for r in vector_results]
 
-Context:
-{contexts}
+            query_entities = await self.extract_query_entities(llm,query)
 
-Graph reasoning:
-{graph_answer}
+            graph_entities = await self.find_related_entities(graph,query_entities)
 
-Provide final answer.
-"""
+            entity_ids = [e["entity_id"] for e in graph_entities]
 
-            # Use async generation if available
-            try:
-                response = await llm.agenerate([final_prompt])
-                final_answer = response.generations[0][0].text.strip()
-            except Exception:
-                # fallback to invoke-style API
-                final_answer = await llm.ainvoke(final_prompt)
+            graph_paths = await self.traverse_graph(graph,entity_ids, hops=2)
 
-            return {"contexts": contexts, "graph_answer": graph_answer, "final_answer": final_answer}
+            graph_context = await self.format_graph_context(graph_paths)
+
+            entity_chunks = await self.entity_chunk_context(graph, entity_ids)
+
+            all_contexts = list(set(vector_contexts + entity_chunks))
+            text_context = "\n\n".join(all_contexts[:10])
+
+
+            raw_prompt = config.final_prompt
+
+
+            clean_prompt = raw_prompt.encode().decode('unicode_escape')
+
+
+            safe_graph_context = str(graph_context).replace("{", "{{").replace("}", "}}")
+            safe_text_context = str(text_context).replace("{", "{{").replace("}", "}}")
+
+
+            final_prompt = clean_prompt.format(
+                query=query,
+                graph_context=safe_graph_context,
+                text_context=safe_text_context
+            )
+
+            answer = llm.invoke(final_prompt).content
+            
+
+            result = {
+                "answer": answer,
+                "query_entities": query_entities,
+                "matched_entities": graph_entities,
+                "graph_context": graph_context,
+                "vector_chunks": vector_contexts
+            }
+
+            return result
 
         except CustomAppException:
             raise
