@@ -17,38 +17,61 @@ class IngestionPipeline:
         self.embeddings = models.embeddings
         
     async def semantic_score(self,chunk_embedding,graph_query_embedding):
-        return cosine_similarity(
-        [chunk_embedding],
-        [graph_query_embedding]
-        )[0][0]
+        try:
+            return cosine_similarity(
+                [chunk_embedding],
+                [graph_query_embedding]
+            )[0][0]
+        except Exception as e:
+            logger.error(f"semantic_score failed: {e}", exc_info=True)
+            # leaf helper: raise generic Exception to caller
+            raise CustomAppException(status_code=500, content=str(e), err_code="SEMANTIC_SCORE_FAILED")
 
     async def structure_score(self,text):
-        score = 0
-        text_lower = text.lower()
+        try:
+            score = 0
+            text_lower = text.lower()
 
-        if any(w in text_lower for w in ["if", "must", "should", "eligible"]):
-            score += 2
+            if any(w in text_lower for w in ["if", "must", "should", "eligible"]):
+                score += 2
 
-        if re.search(r'(\d+\.)|(- )|(\•)', text):
-            score += 2
+            if re.search(r'(\d+\.)|(- )|(\•)', text):
+                score += 2
 
-        if re.search(r'\d+', text):
-            score += 1
+            if re.search(r'\d+', text):
+                score += 1
 
-        return score
+            return score
+        except Exception as e:
+            logger.error(f"structure_score failed: {e}", exc_info=True)
+            # leaf helper: raise generic Exception
+            raise CustomAppException(status_code=500, content=str(e), err_code="STRUCTURE_SCORE_FAILED")
 
     async def keyword_score(self,text):
-        text_lower = text.lower()
-        kw = sum(1 for k in config.base_keywords if k in text_lower)
-        rel = sum(1 for r in config.relation_words if r in text_lower)
-        return kw + rel
+        try:
+            text_lower = text.lower()
+            kw = sum(1 for k in config.base_keywords if k in text_lower)
+            rel = sum(1 for r in config.relation_words if r in text_lower)
+            return kw + rel
+        except Exception as e:
+            logger.error(f"keyword_score failed: {e}", exc_info=True)
+            # leaf helper: raise generic Exception
+            raise CustomAppException(status_code=500, content=str(e), err_code="KEYWORD_SCORE_FAILED")
 
     async def score_chunk(self,text, embedding,graph_query_embedding):
-        return (
-        await self.keyword_score(text) +
-        await self.structure_score(text) +
-        (await self.semantic_score(embedding, graph_query_embedding) * 5)
-        )
+        try:
+            return (
+                await self.keyword_score(text) +
+                await self.structure_score(text) +
+                (await self.semantic_score(embedding, graph_query_embedding) * 5)
+            )
+        except CustomAppException:
+            # propagate existing domain errors
+            raise
+        except Exception as e:
+            logger.error(f"score_chunk failed: {e}", exc_info=True)
+            # raise CustomAppException so callers (like select_top_chunks/ingest) get a structured error
+            raise CustomAppException(status_code=500, content=str(e), err_code="SCORE_CHUNK_FAILED")
 
 
     async def select_top_chunks(
@@ -59,85 +82,105 @@ class IngestionPipeline:
         top_k=10,
 
     ):
+        try:
+            scored = []
 
-        scored = []
+            for i, chunk in enumerate(chunks):
 
-        for i, chunk in enumerate(chunks):
-
-            score = await self.score_chunk(
-                chunk,
-                embeddings_list[i],
-                graph_query_embedding=graph_query_embedding
-            )
-
-            scored.append(
-                (
+                score = await self.score_chunk(
                     chunk,
                     embeddings_list[i],
-                    score
+                    graph_query_embedding=graph_query_embedding
                 )
+
+                scored.append(
+                    (
+                        chunk,
+                        embeddings_list[i],
+                        score
+                    )
+                )
+
+            scored.sort(
+                key=lambda x: x[2],
+                reverse=True
             )
 
-        scored.sort(
-            key=lambda x: x[2],
-            reverse=True
-        )
-
-        return scored[:top_k]
+            return scored[:top_k]
+        except CustomAppException:
+            raise
+        except Exception as e:
+            logger.error(f"select_top_chunks failed: {e}", exc_info=True)
+            raise CustomAppException(status_code=500, content=str(e), err_code="SELECT_TOP_CHUNKS_FAILED")
     
     async def normalize_entity(self,text: str):
+        try:
+            ENTITY_NORMALIZATION = {
+                "financial aid": "Scholarship",
+                "scholarship scheme": "Scholarship",
+                "aid": "Scholarship",
+                "govt": "Government",
+                "tn govt": "Tamil Nadu Government"
+            }
 
-        ENTITY_NORMALIZATION = {
-            "financial aid": "Scholarship",
-            "scholarship scheme": "Scholarship",
-            "aid": "Scholarship",
-            "govt": "Government",
-            "tn govt": "Tamil Nadu Government"
-        }
+            text = text.strip().lower()
 
-        text = text.strip().lower()
+            if text in ENTITY_NORMALIZATION:
+                return ENTITY_NORMALIZATION[text]
 
-        if text in ENTITY_NORMALIZATION:
-            return ENTITY_NORMALIZATION[text]
-
-        return text.title()
+            return text.title()
+        except Exception as e:
+            logger.error(f"normalize_entity failed: {e}", exc_info=True)
+            # leaf helper: re-raise generic Exception
+            raise CustomAppException(status_code=500, content=str(e), err_code="NORMALIZE_ENTITY_FAILED")
     
     async def generate_entity_id(self,label: str, name: str):
-
-        clean = f"{label}_{name}".lower().strip()
-
-        clean = re.sub(r'[^a-z0-9]+', '_', clean)
-
-        return clean
+        try:
+            clean = f"{label}_{name}".lower().strip()
+            clean = re.sub(r'[^a-z0-9]+', '_', clean)
+            return clean
+        except Exception as e:
+            logger.error(f"generate_entity_id failed: {e}", exc_info=True)
+            # leaf helper: re-raise generic Exception
+            raise CustomAppException(status_code=500, content=str(e), err_code="GENERATE_ENTITY_ID_FAILED")
     
     async def sanitize_label(self,label: str):
+        try:
+            # remove spaces/special chars
+            label = re.sub(r'[^a-zA-Z0-9_]', '_', label)
 
-    # remove spaces/special chars
-        label = re.sub(r'[^a-zA-Z0-9_]', '_', label)
+            # Neo4j labels cannot start with number
+            if label and label[0].isdigit():
+                label = f"LABEL_{label}"
 
-        # Neo4j labels cannot start with number
-        if label and label[0].isdigit():
-            label = f"LABEL_{label}"
-
-        return label
+            return label
+        except Exception as e:
+            logger.error(f"sanitize_label failed: {e}", exc_info=True)
+            # leaf helper: re-raise generic Exception
+            raise CustomAppException(status_code=500, content=str(e), err_code="SANITIZE_LABEL_FAILED")
 
     async def sanitize_relationship(self,rel: str):
+        try:
+            rel = rel.upper()
 
-        rel = rel.upper()
+            rel = re.sub(
+                r'[^A-Z0-9_]',
+                '_',
+                rel
+            )
 
-        rel = re.sub(
-            r'[^A-Z0-9_]',
-            '_',
-            rel
-        )
+            if rel and rel[0].isdigit():
+                rel = f"REL_{rel}"
 
-        if rel and rel[0].isdigit():
-            rel = f"REL_{rel}"
-
-        return rel
+            return rel
+        except Exception as e:
+            logger.error(f"sanitize_relationship failed: {e}", exc_info=True)
+            # leaf helper: re-raise generic Exception
+            raise CustomAppException(status_code=500, content=str(e), err_code="SANITIZE_REL_FAILED")
 
     async def ingest_pdf(self,file_name:str,content:str,embeddings, transformer:LLMGraphTransformer, graph:Neo4jGraph,graph_query_embedding):
         try:
+            logger.info(f"Starting ingest_pdf for: {file_name}")
 
             # -------------------------------
             # 1. Read PDF and add document node
@@ -146,9 +189,12 @@ class IngestionPipeline:
 
             full_text = "\n".join([page.get_text() for page in doc])
 
+            logger.info(f"Read PDF pages: {len(doc)}; total_chars={len(full_text)}")
+
             doc_id = hashlib.md5(
                  file_name.encode()
                 ).hexdigest()
+            logger.info(f"Created document id: {doc_id}")
             
 
             graph.query("""
@@ -172,13 +218,15 @@ class IngestionPipeline:
                 chunk_overlap=100
             )
             chunks = splitter.split_text(full_text)
+            logger.info(f"Chunked into {len(chunks)} chunks (chunk_size={splitter.chunk_size}, overlap={splitter.chunk_overlap})")
 
-            logger.info(f"Total chunks: {len(chunks)}")
 
             # -------------------------------
             # 3. Batch Embeddings (FAST)
             # -------------------------------
+            logger.info("Computing embeddings for chunks...")
             vectors = embeddings.embed_documents(chunks)
+            logger.info(f"Computed embeddings for {len(vectors)} chunks")
 
 
             # -------------------------------
@@ -224,6 +272,8 @@ class IngestionPipeline:
                     }
                 )
 
+            logger.info(f"Stored {len(chunk_docs)} chunks into graph for document {doc_id}")
+
 
         
 
@@ -234,6 +284,7 @@ class IngestionPipeline:
 
 
             selected_chunks = await self.select_top_chunks(chunks, vectors, top_k=10,graph_query_embedding=graph_query_embedding)
+            logger.info(f"Selected {len(selected_chunks)} top chunks for graph extraction")
 
         
 
@@ -258,16 +309,20 @@ class IngestionPipeline:
                         }
                     )
                 )
-            logger.info(f"Selected {len(graph_documents_input)} chunks for graph")
+            logger.info(f"Prepared {len(graph_documents_input)} Document objects for graph extraction")
 
             # -------------------------------
             # 7. Graph Extraction (LLM)
             # -------------------------------
+            logger.info("Invoking graph transformer to extract nodes and relationships")
             graph_docs = transformer.convert_to_graph_documents(graph_documents_input)
+            logger.info(f"Graph extraction returned {len(graph_docs)} graph documents")
 
             # -------------------------------
             # 8. Insert Entities + Relationships
             # -------------------------------
+
+
 
             for g_doc in graph_docs:
 
@@ -350,10 +405,17 @@ class IngestionPipeline:
                         "source_id": source_id,
                         "target_id": target_id
                     })
+                    total_relationships += 1
+
+                total_entities += len(getattr(g_doc, "nodes", []))
+
+            logger.info(f"Inserted entities and relationships into graph")
 
             # -------------------------------
             # 11. Create Vector Index
             # -------------------------------
+            logger.info("Creating vector index (best-effort)")
+
             graph.query("""
             CREATE VECTOR INDEX chunk_embedding_index
             IF NOT EXISTS
@@ -368,7 +430,7 @@ class IngestionPipeline:
             }
             """)
 
-            logger.info("Graph ingestion completed successfully")
+            logger.info("Graph ingestion completed successfully for document %s", doc_id)
 
 
             return {
@@ -378,7 +440,10 @@ class IngestionPipeline:
                 "graph_chunks": len(selected_chunks),
                 "graph_documents": len(graph_docs)
             }
-    
+
+        except CustomAppException:
+            # propagate domain exceptions coming from child helpers
+            raise
         except Exception as e:
             logger.error(f"Ingestion failed: {str(e)}", exc_info=True)
             raise CustomAppException(status_code=500, content=str(e), err_code="INGESTION_FAILED")
